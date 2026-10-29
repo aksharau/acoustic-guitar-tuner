@@ -12,6 +12,7 @@ let analyser = null;
 let microphone = null;
 let isRunning = false;
 let animationId = null;
+let selectedNote = NOTES[0];
 
 const toggleMicBtn = document.getElementById("toggle-mic");
 const noteNameEl = document.getElementById("note-name");
@@ -19,6 +20,26 @@ const targetFreqEl = document.getElementById("target-frequency");
 const detectedFreqEl = document.getElementById("detected-frequency");
 const needleEl = document.getElementById("needle");
 const tuningStatusEl = document.getElementById("tuning-status");
+const stringButtons = document.querySelectorAll(".string-btn");
+
+function updateSelectedString(button) {
+  const freq = Number(button.dataset.freq);
+  const note = NOTES.find((item) => Math.abs(item.freq - freq) < 0.01);
+
+  if (!note) return;
+
+  selectedNote = note;
+  stringButtons.forEach((btn) => btn.classList.toggle("active", btn === button));
+
+  noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
+  targetFreqEl.textContent = `Target: ${selectedNote.freq.toFixed(2)} Hz`;
+}
+
+stringButtons.forEach((button) => {
+  button.addEventListener("click", () => updateSelectedString(button));
+});
+
+updateSelectedString(stringButtons[0]);
 
 toggleMicBtn.addEventListener("click", async () => {
   if (!isRunning) {
@@ -39,6 +60,7 @@ toggleMicBtn.addEventListener("click", async () => {
       toggleMicBtn.textContent = "Stop Tuner";
       toggleMicBtn.classList.add("active");
       tuningStatusEl.textContent = "Listening...";
+      tuningStatusEl.style.color = "#ffa502";
 
       updatePitch();
     } catch (err) {
@@ -56,11 +78,12 @@ function stopTuner() {
   isRunning = false;
   toggleMicBtn.textContent = "Start Tuner";
   toggleMicBtn.classList.remove("active");
-  noteNameEl.textContent = "--";
-  targetFreqEl.textContent = "Target: -- Hz";
+  noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
+  targetFreqEl.textContent = `Target: ${selectedNote.freq.toFixed(2)} Hz`;
   detectedFreqEl.textContent = "Detected: -- Hz";
   needleEl.style.left = "50%";
   tuningStatusEl.textContent = "Click Start to Tune";
+  tuningStatusEl.style.color = "#ffa502";
 }
 
 function autoCorrelate(buffer, sampleRate) {
@@ -95,7 +118,7 @@ function autoCorrelate(buffer, sampleRate) {
   let c = new Array(SIZE).fill(0);
   for (let i = 0; i < SIZE; i++) {
     for (let j = 0; j < SIZE - i; j++) {
-      c[i] = c[i] + buffer[j] * buffer[j + i];
+      c[i] += buffer[j] * buffer[j + i];
     }
   }
 
@@ -109,32 +132,28 @@ function autoCorrelate(buffer, sampleRate) {
       maxpos = i;
     }
   }
-  let T0 = maxpos;
-  return sampleRate / T0;
+
+  if (maxpos <= 0) return -1;
+
+  return sampleRate / maxpos;
 }
 
 function updatePitch() {
+  if (!analyser || !audioContext) {
+    return;
+  }
+
   const buffer = new Float32Array(2048);
   analyser.getFloatTimeDomainData(buffer);
   const acFreq = autoCorrelate(buffer, audioContext.sampleRate);
 
-  if (acFreq !== -1 && acFreq > 70 && acFreq > 400) {
+  if (acFreq !== -1 && acFreq > 70 && acFreq < 400) {
     detectedFreqEl.textContent = `Detected: ${acFreq.toFixed(2)} Hz`;
 
-    let closest = NOTES[0];
-    let minDiff = Math.abs(acFreq - closest.freq);
-    for (let i = 1; i < NOTES.length; i++) {
-      let diff = Math.abs(acFreq - NOTES[i].freq);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = NOTES[i];
-      }
-    }
+    noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
+    targetFreqEl.textContent = `Target: ${selectedNote.freq.toFixed(2)} Hz`;
 
-    noteNameEl.textContent = closest.name.replace(/[₀-₉]/g, "");
-    targetFreqEl.textContent = `Target: ${closest.freq} Hz`;
-
-    const cents = 1200 * Math.log2(acFreq / closest.freq);
+    const cents = 1200 * Math.log2(acFreq / selectedNote.freq);
     let needlePos = 50 + cents;
     needlePos = Math.max(0, Math.min(100, needlePos));
     needleEl.style.left = `${needlePos}%`;
@@ -149,6 +168,11 @@ function updatePitch() {
       tuningStatusEl.textContent = "Sharp (Loosen String ↙)";
       tuningStatusEl.style.color = "#ff4757";
     }
+  } else {
+    detectedFreqEl.textContent = "Detected: -- Hz";
+    tuningStatusEl.textContent = "Listening...";
+    tuningStatusEl.style.color = "#ffa502";
+    needleEl.style.left = "50%";
   }
 
   animationId = requestAnimationFrame(updatePitch);
