@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Acoustic Guitar Tuner</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="tuner-container">
+      <h1>Guitar Tuner</h1>
+      <p class="subtitle">Standard Tuning (E-A-D-G-B-E)</p>
+
+      <div class="display-box">
+        <div id="note-name" class="note-name">--</div>
+        <div id="target-frequency" class="target-freq">Target: -- Hz</div>
+        <div id="detected-frequency" class="detected-freq">Detected: -- Hz</div>
+      </div>
+
+      <div class="meter-container">
+        <div class="meter">
+          <div id="needle" class="needle"></div>
+        </div>
+        <div class="meter-labels">
+          <span>Flat (-50c)</span>
+          <span>In Tune</span>
+          <span>Sharp (+50c)</span>
+        </div>
+        <div id="tuning-status" class="tuning-status">Click Start to Tune</div>
+      </div>
+
+      <div class="string-buttons">
+        <button class="string-btn" data-freq="82.41">E₂ (6)</button>
+        <button class="string-btn" data-freq="110.00">A₂ (5)</button>
+        <button class="string-btn" data-freq="146.83">D₃ (4)</button>
+        <button class="string-btn" data-freq="196.00">G₃ (3)</button>
+        <button class="string-btn" data-freq="246.94">B₃ (2)</button>
+        <button class="string-btn" data-freq="329.63">E₄ (1)</button>
+      </div>
+
+      <button id="toggle-mic" class="mic-btn">Start Tuner</button>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
