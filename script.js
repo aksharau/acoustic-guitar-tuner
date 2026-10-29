@@ -13,6 +13,7 @@ let microphone = null;
 let isRunning = false;
 let animationId = null;
 let selectedNote = NOTES[0];
+let frequencyHistory = [];
 
 const toggleMicBtn = document.getElementById("toggle-mic");
 const noteNameEl = document.getElementById("note-name");
@@ -29,6 +30,7 @@ function updateSelectedString(button) {
   if (!note) return;
 
   selectedNote = note;
+  frequencyHistory = [];
   stringButtons.forEach((btn) => btn.classList.toggle("active", btn === button));
 
   noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
@@ -52,6 +54,7 @@ toggleMicBtn.addEventListener("click", async () => {
 
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.2;
 
       microphone = audioContext.createMediaStreamSource(stream);
       microphone.connect(analyser);
@@ -61,6 +64,7 @@ toggleMicBtn.addEventListener("click", async () => {
       toggleMicBtn.classList.add("active");
       tuningStatusEl.textContent = "Listening...";
       tuningStatusEl.style.color = "#ffa502";
+      frequencyHistory = [];
 
       updatePitch();
     } catch (err) {
@@ -84,27 +88,32 @@ function stopTuner() {
   needleEl.style.left = "50%";
   tuningStatusEl.textContent = "Click Start to Tune";
   tuningStatusEl.style.color = "#ffa502";
+  frequencyHistory = [];
 }
 
 function autoCorrelate(buffer, sampleRate) {
   let SIZE = buffer.length;
   let sumOfSquares = 0;
+
   for (let i = 0; i < SIZE; i++) {
-    let val = buffer[i];
+    const val = buffer[i];
     sumOfSquares += val * val;
   }
-  let rootMeanSquare = Math.sqrt(sumOfSquares / SIZE);
+
+  const rootMeanSquare = Math.sqrt(sumOfSquares / SIZE);
   if (rootMeanSquare < 0.01) return -1;
 
-  let r1 = 0,
-    r2 = SIZE - 1;
-  let threshold = 0.2;
+  let r1 = 0;
+  let r2 = SIZE - 1;
+  const threshold = 0.2;
+
   for (let i = 0; i < SIZE / 2; i++) {
     if (Math.abs(buffer[i]) < threshold) {
       r1 = i;
       break;
     }
   }
+
   for (let i = 1; i < SIZE / 2; i++) {
     if (Math.abs(buffer[SIZE - i]) < threshold) {
       r2 = SIZE - i;
@@ -115,27 +124,40 @@ function autoCorrelate(buffer, sampleRate) {
   buffer = buffer.slice(r1, r2);
   SIZE = buffer.length;
 
-  let c = new Array(SIZE).fill(0);
-  for (let i = 0; i < SIZE; i++) {
-    for (let j = 0; j < SIZE - i; j++) {
-      c[i] += buffer[j] * buffer[j + i];
+  const correlation = new Array(SIZE).fill(0);
+  for (let lag = 0; lag < SIZE; lag++) {
+    let total = 0;
+    for (let i = 0; i < SIZE - lag; i++) {
+      total += buffer[i] * buffer[i + lag];
+    }
+    correlation[lag] = total;
+  }
+
+  let maxLag = 0;
+  let maxVal = -Infinity;
+
+  for (let lag = 1; lag < SIZE; lag++) {
+    if (correlation[lag] > maxVal) {
+      maxVal = correlation[lag];
+      maxLag = lag;
     }
   }
 
-  let d = 0;
-  while (c[d] > c[d + 1]) d++;
-  let maxval = -1,
-    maxpos = -1;
-  for (let i = d; i < SIZE; i++) {
-    if (c[i] > maxval) {
-      maxval = c[i];
-      maxpos = i;
-    }
+  if (maxLag <= 0) return -1;
+
+  return sampleRate / maxLag;
+}
+
+function smoothFrequency(freq) {
+  if (!Number.isFinite(freq)) return null;
+
+  frequencyHistory.push(freq);
+  if (frequencyHistory.length > 8) {
+    frequencyHistory.shift();
   }
 
-  if (maxpos <= 0) return -1;
-
-  return sampleRate / maxpos;
+  const avg = frequencyHistory.reduce((sum, value) => sum + value, 0) / frequencyHistory.length;
+  return avg;
 }
 
 function updatePitch() {
@@ -145,35 +167,46 @@ function updatePitch() {
 
   const buffer = new Float32Array(2048);
   analyser.getFloatTimeDomainData(buffer);
-  const acFreq = autoCorrelate(buffer, audioContext.sampleRate);
+  const rawFreq = autoCorrelate(buffer, audioContext.sampleRate);
 
-  if (acFreq !== -1 && acFreq > 70 && acFreq < 400) {
-    detectedFreqEl.textContent = `Detected: ${acFreq.toFixed(2)} Hz`;
+  if (rawFreq !== -1 && rawFreq > 50 && rawFreq < 500) {
+    const minExpected = selectedNote.freq * 0.6;
+    const maxExpected = selectedNote.freq * 1.8;
 
-    noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
-    targetFreqEl.textContent = `Target: ${selectedNote.freq.toFixed(2)} Hz`;
+    if (rawFreq >= minExpected && rawFreq <= maxExpected) {
+      const smoothedFreq = smoothFrequency(rawFreq);
+      const detectedFreq = smoothedFreq ?? rawFreq;
 
-    const cents = 1200 * Math.log2(acFreq / selectedNote.freq);
-    let needlePos = 50 + cents;
-    needlePos = Math.max(0, Math.min(100, needlePos));
-    needleEl.style.left = `${needlePos}%`;
+      detectedFreqEl.textContent = `Detected: ${detectedFreq.toFixed(2)} Hz`;
+      noteNameEl.textContent = selectedNote.name.replace(/[₀-₉]/g, "");
+      targetFreqEl.textContent = `Target: ${selectedNote.freq.toFixed(2)} Hz`;
 
-    if (Math.abs(cents) < 3) {
-      tuningStatusEl.textContent = "✨ In Tune! ✨";
-      tuningStatusEl.style.color = "#2ed573";
-    } else if (cents < 0) {
-      tuningStatusEl.textContent = "Flat (Tighten String ↗)";
-      tuningStatusEl.style.color = "#ffa502";
-    } else {
-      tuningStatusEl.textContent = "Sharp (Loosen String ↙)";
-      tuningStatusEl.style.color = "#ff4757";
+      const cents = 1200 * Math.log2(detectedFreq / selectedNote.freq);
+      let needlePos = 50 + cents;
+      needlePos = Math.max(0, Math.min(100, needlePos));
+      needleEl.style.left = `${needlePos}%`;
+
+      if (Math.abs(cents) < 3) {
+        tuningStatusEl.textContent = "✨ In Tune! ✨";
+        tuningStatusEl.style.color = "#2ed573";
+      } else if (cents < 0) {
+        tuningStatusEl.textContent = "Flat (Tighten String ↗)";
+        tuningStatusEl.style.color = "#ffa502";
+      } else {
+        tuningStatusEl.textContent = "Sharp (Loosen String ↙)";
+        tuningStatusEl.style.color = "#ff4757";
+      }
+
+      animationId = requestAnimationFrame(updatePitch);
+      return;
     }
-  } else {
-    detectedFreqEl.textContent = "Detected: -- Hz";
-    tuningStatusEl.textContent = "Listening...";
-    tuningStatusEl.style.color = "#ffa502";
-    needleEl.style.left = "50%";
   }
+
+  detectedFreqEl.textContent = "Detected: -- Hz";
+  tuningStatusEl.textContent = "Listening...";
+  tuningStatusEl.style.color = "#ffa502";
+  needleEl.style.left = "50%";
+  frequencyHistory = [];
 
   animationId = requestAnimationFrame(updatePitch);
 }
